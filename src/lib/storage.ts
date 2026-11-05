@@ -1,7 +1,7 @@
 import { AUTH_STORAGE_KEY } from './auth';
 import { supabase } from './supabase';
 import type { Question, Survey, SurveyStatus, SurveySubmission } from './types';
-import { createDefaultQuestion, slugify } from './utils';
+import { createDefaultQuestion, generateUniquePublicSlug, slugify } from './utils';
 
 const SURVEYS_KEY = 'classroom-survey-surveys-v1';
 const SUBMISSIONS_KEY = 'classroom-survey-submissions-v1';
@@ -136,9 +136,9 @@ export function setSurveyStatus(surveys: Survey[], surveyId: string, status: Sur
 }
 
 export function ensureSurveySlug(survey: Survey): Survey {
-  const safeTitle = slugify(survey.title || 'survey');
-  const slug = survey.slug && survey.slug.trim() ? survey.slug : `${safeTitle}-${Math.random().toString(36).slice(2, 6)}`;
-  return { ...survey, slug, updatedAt: new Date().toISOString() };
+  const existingSlugs = getSurveys().filter((entry) => entry.id !== survey.id).map((entry) => entry.slug);
+  const nextSlug = survey.slug && survey.slug.trim() ? survey.slug : generateUniquePublicSlug(survey.title || 'survey', existingSlugs);
+  return { ...survey, slug: nextSlug, updatedAt: new Date().toISOString() };
 }
 
 export function getSurveyById(surveyId: string): Survey | undefined {
@@ -172,6 +172,63 @@ export function hasSubmittedSurvey(surveyId: string, token: string): boolean {
   return getSubmissionsForSurvey(surveyId).some((entry) => entry.token === token);
 }
 
+export async function submitSurveyResponse(surveyId: string, token: string, answers: Array<{ question_id: string; choice_id?: string; text_answer?: string }>): Promise<{ response_id: string }> {
+  const survey = getSurveyById(surveyId);
+  if (!survey) {
+    throw new Error('Survey not found.');
+  }
+
+  if (survey.status !== 'active') {
+    throw new Error('This survey is closed or unavailable.');
+  }
+
+  if (hasSubmittedSurvey(survey.id, token)) {
+    throw new Error('You have already submitted a response for this survey.');
+  }
+
+  if (supabase) {
+    try {
+      const { data, error } = await supabase.rpc('submit_survey_response', {
+        p_survey_id: surveyId,
+        p_anonymous_token: token,
+        p_answers: answers,
+      });
+
+      if (error) {
+        throw new Error(error.message || 'Unable to submit survey responses.');
+      }
+
+      return { response_id: data ?? crypto.randomUUID() };
+    } catch (error) {
+      console.error('Supabase submit_survey_response failed; using local fallback:', error);
+    }
+  }
+
+  const missingAnswer = survey.questions.some((question) => {
+    const selected = answers.find((answer) => answer.question_id === question.id);
+    return !selected || (!selected.choice_id && !selected.text_answer?.trim());
+  });
+
+  if (missingAnswer) {
+    throw new Error('Please answer every question before submitting.');
+  }
+
+  const submission: SurveySubmission = {
+    id: `submission-${Math.random().toString(36).slice(2, 10)}`,
+    surveyId: survey.id,
+    token,
+    submittedAt: new Date().toISOString(),
+    answers: answers.map((answer) => ({
+      questionId: answer.question_id,
+      choiceId: answer.choice_id,
+      textAnswer: answer.text_answer,
+    })),
+  };
+
+  saveSubmission(submission);
+  return { response_id: submission.id };
+}
+
 export function duplicateSurvey(survey: Survey): Survey {
   const clonedQuestions: Question[] = survey.questions.map((question) => ({
     ...question,
@@ -201,11 +258,19 @@ export async function activateSurvey(surveyId: string): Promise<Survey> {
     throw new Error('Survey not found.');
   }
 
+  const generatedSlug = generateUniquePublicSlug(activeSurvey.title || 'survey', getSurveys().filter((survey) => survey.id !== surveyId).map((survey) => survey.slug));
+  const nextSurvey: Survey = {
+    ...activeSurvey,
+    slug: generatedSlug,
+    status: 'active',
+    updatedAt: new Date().toISOString(),
+  };
+
   if (supabase && localStorage.getItem(AUTH_STORAGE_KEY) === 'true') {
     try {
       const { data, error } = await supabase.rpc('activate_survey', {
         p_survey_id: surveyId,
-        p_public_slug: activeSurvey.slug || null,
+        p_public_slug: generatedSlug,
       });
 
       if (error) {
@@ -214,7 +279,7 @@ export async function activateSurvey(surveyId: string): Promise<Survey> {
 
       const updatedSurveys = getSurveys().map((survey) => {
         if (survey.id === surveyId) {
-          return normalizeSurvey({ ...survey, status: 'active', slug: data?.public_slug || survey.slug } as Survey);
+          return normalizeSurvey({ ...survey, status: 'active', slug: data?.public_slug || generatedSlug } as Survey);
         }
 
         if (survey.status === 'active') {
@@ -225,13 +290,15 @@ export async function activateSurvey(surveyId: string): Promise<Survey> {
       });
 
       saveSurveys(updatedSurveys);
-      return normalizeSurvey({ ...activeSurvey, status: 'active', slug: data?.public_slug || activeSurvey.slug } as Survey);
+      return normalizeSurvey({ ...nextSurvey, slug: data?.public_slug || generatedSlug } as Survey);
     } catch (error) {
       console.error('Activate survey in Supabase failed, falling back locally:', error);
     }
   }
 
-  const nextSurveys = setSurveyStatus(getSurveys(), surveyId, 'active');
+  const nextSurveys = setSurveyStatus(getSurveys(), surveyId, 'active').map((survey) =>
+    survey.id === surveyId ? { ...survey, slug: generatedSlug } : survey,
+  );
   saveSurveys(nextSurveys);
   const activated = nextSurveys.find((survey) => survey.id === surveyId);
 

@@ -1,6 +1,6 @@
 import { useState } from 'react';
 import { useNavigate, useParams } from 'react-router-dom';
-import { getSurveyBySlug, getSubmissionsForSurvey, hasSubmittedSurvey, saveSubmission } from '../lib/storage';
+import { getSurveyBySlug, submitSurveyResponse } from '../lib/storage';
 import { getAnonymousToken } from '../lib/utils';
 
 export default function PublicSurveyPage() {
@@ -13,7 +13,7 @@ export default function PublicSurveyPage() {
   const [submitted, setSubmitted] = useState(false);
 
   if (!survey) {
-    return <div className="mx-auto max-w-2xl px-4 py-16 text-center text-slate-500">This survey is unavailable or closed.</div>;
+    return <div className="mx-auto max-w-2xl px-4 py-16 text-center text-slate-500">Survey not found or no longer available.</div>;
   }
 
   if (submitted) {
@@ -34,7 +34,7 @@ export default function PublicSurveyPage() {
     setAnswers((current) => ({ ...current, [questionId]: value }));
   };
 
-  const handleSubmit = (event: React.FormEvent) => {
+  const handleSubmit = async (event: React.FormEvent) => {
     event.preventDefault();
     setError('');
 
@@ -44,31 +44,33 @@ export default function PublicSurveyPage() {
       return;
     }
 
-    const token = getAnonymousToken();
-    if (hasSubmittedSurvey(survey.id, token)) {
-      setError('You have already submitted a response for this survey.');
-      return;
-    }
-
     setIsSubmitting(true);
 
     try {
-      const submission = {
-        id: `submission-${Math.random().toString(36).slice(2, 10)}`,
-        surveyId: survey.id,
-        token,
-        submittedAt: new Date().toISOString(),
-        answers: survey.questions.map((question) => ({
-          questionId: question.id,
-          choiceId: question.choices.find((choice) => choice.text === answers[question.id])?.id,
-          textAnswer: answers[question.id],
-        })),
-      };
+      const token = getAnonymousToken();
+      const payload = survey.questions.map((question) => {
+        const selectedChoice = question.choices.find((choice) => choice.text === answers[question.id]);
 
-      saveSubmission(submission);
+        return {
+          question_id: question.id,
+          choice_id: selectedChoice?.id,
+          text_answer: selectedChoice ? undefined : answers[question.id],
+        };
+      });
+
+      await submitSurveyResponse(survey.id, token, payload);
       setSubmitted(true);
-    } catch {
-      setError('Something went wrong while saving your submission. Please try again.');
+    } catch (submitError) {
+      const message = submitError instanceof Error ? submitError.message : 'Something went wrong while saving your submission.';
+      if (message.toLowerCase().includes('already submitted')) {
+        setError('You have already submitted a response for this survey.');
+      } else if (message.toLowerCase().includes('survey not found')) {
+        setError('Survey not found.');
+      } else if (message.toLowerCase().includes('not active') || message.toLowerCase().includes('closed') || message.toLowerCase().includes('unavailable')) {
+        setError('This survey is closed and no longer accepting responses.');
+      } else {
+        setError(message);
+      }
     } finally {
       setIsSubmitting(false);
     }
@@ -93,9 +95,9 @@ export default function PublicSurveyPage() {
                       name={question.id}
                       checked={answers[question.id] === choice.text}
                       onChange={() => setAnswer(question.id, choice.text)}
-                      className="h-4 w-4 text-indigo-600"
+                      className="h-5 w-5 text-indigo-600"
                     />
-                    <span>{choice.text}</span>
+                    <span className="text-base">{choice.text}</span>
                   </label>
                 ))}
               </div>
@@ -104,7 +106,7 @@ export default function PublicSurveyPage() {
 
           {error && <p className="rounded-lg border border-red-200 bg-red-50 p-3 text-sm text-red-700">{error}</p>}
 
-          <button type="submit" disabled={isSubmitting} className="w-full rounded-lg bg-indigo-600 px-4 py-3 font-medium text-white hover:bg-indigo-500 disabled:cursor-not-allowed disabled:bg-indigo-400">
+          <button type="submit" disabled={isSubmitting} className="w-full rounded-lg bg-indigo-600 px-4 py-4 text-base font-medium text-white hover:bg-indigo-500 disabled:cursor-not-allowed disabled:bg-indigo-400">
             {isSubmitting ? 'Submitting...' : 'Submit Response'}
           </button>
         </form>

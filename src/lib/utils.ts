@@ -34,6 +34,18 @@ export function slugify(value: string): string {
     .slice(0, 12) || 'survey';
 }
 
+export function generateUniquePublicSlug(title: string, existingSlugs: string[] = []): string {
+  const base = slugify(title || 'survey');
+  const suffix = Math.random().toString(36).slice(2, 8);
+  const candidate = `${base}-${suffix}`;
+
+  if (!existingSlugs.includes(candidate)) {
+    return candidate;
+  }
+
+  return generateUniquePublicSlug(`${title}-${Math.random().toString(36).slice(2, 4)}`, existingSlugs);
+}
+
 export function makeId(prefix = 'id'): string {
   return `${prefix}-${Math.random().toString(36).slice(2, 10)}`;
 }
@@ -56,8 +68,8 @@ export function createDefaultChoice(position: number): Choice {
 }
 
 export function getPublicSurveyUrl(slug: string): string {
-  const base = import.meta.env.VITE_APP_URL || window.location.origin;
-  return `${base}/s/${slug}`;
+  const base = import.meta.env.VITE_APP_URL || window.location.origin || 'http://localhost:5173';
+  return `${base.replace(/\/$/, '')}/s/${slug}`;
 }
 
 export function toQuestionData(question: Question): Record<string, string> {
