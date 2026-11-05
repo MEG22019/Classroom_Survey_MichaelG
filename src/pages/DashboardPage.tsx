@@ -1,14 +1,28 @@
-import { useMemo, useState } from 'react';
-import { Link, useNavigate } from 'react-router-dom';
+import { useEffect, useMemo, useState } from 'react';
+import { useNavigate } from 'react-router-dom';
 import { SurveyCard } from '../components/SurveyCard';
-import { duplicateSurvey, getSurveys, saveSurveys, setSurveyStatus } from '../lib/storage';
+import { activateSurvey, closeSurvey, createSurveyRecord, duplicateSurvey, getSurveys, saveSurveys, setSurveyStatus } from '../lib/storage';
 import type { Survey } from '../lib/types';
 
 export default function DashboardPage() {
   const navigate = useNavigate();
-  const [surveys, setSurveys] = useState<Survey[]>(() => getSurveys());
+  const [surveys, setSurveys] = useState<Survey[]>([]);
   const [search, setSearch] = useState('');
   const [statusFilter, setStatusFilter] = useState<'all' | Survey['status']>('all');
+  const [loading, setLoading] = useState(true);
+  const [error, setError] = useState('');
+
+  useEffect(() => {
+    setLoading(true);
+    try {
+      setSurveys(getSurveys());
+      setError('');
+    } catch {
+      setError('Unable to load saved surveys.');
+    } finally {
+      setLoading(false);
+    }
+  }, []);
 
   const filteredSurveys = useMemo(() => {
     return surveys.filter((survey) => {
@@ -24,18 +38,8 @@ export default function DashboardPage() {
   };
 
   const handleNewSurvey = () => {
-    const nextSurveys = [...surveys];
-    const created: Survey = {
-      id: `survey-${Math.random().toString(36).slice(2, 10)}`,
-      title: 'New Survey',
-      description: '',
-      status: 'draft',
-      slug: `draft-${Math.random().toString(36).slice(2, 8)}`,
-      createdAt: new Date().toISOString(),
-      updatedAt: new Date().toISOString(),
-      questions: [],
-    };
-    nextSurveys.unshift(created);
+    const created = createSurveyRecord('New Survey', '');
+    const nextSurveys = [created, ...surveys];
     updateSurveyList(nextSurveys);
     navigate(`/surveys/${created.id}/edit`);
   };
@@ -43,23 +47,30 @@ export default function DashboardPage() {
   const handleDelete = (surveyId: string) => {
     const confirmed = window.confirm('Delete this survey and all associated responses?');
     if (!confirmed) return;
-    const next = surveys.filter((survey) => survey.id !== surveyId);
-    updateSurveyList(next);
+    updateSurveyList(surveys.filter((survey) => survey.id !== surveyId));
   };
 
   const handleArchive = (surveyId: string) => {
-    const next = setSurveyStatus(surveys, surveyId, 'archived');
-    updateSurveyList(next);
+    updateSurveyList(setSurveyStatus(surveys, surveyId, 'archived'));
   };
 
-  const handleActivate = (surveyId: string) => {
-    const next = setSurveyStatus(surveys, surveyId, 'active');
-    updateSurveyList(next);
+  const handleActivate = async (surveyId: string) => {
+    try {
+      const activated = await activateSurvey(surveyId);
+      updateSurveyList(getSurveys().map((survey) => survey.id === activated.id ? activated : survey));
+      navigate(`/surveys/${activated.id}/present`);
+    } catch (activateError) {
+      setError(activateError instanceof Error ? activateError.message : 'Unable to activate the survey.');
+    }
   };
 
-  const handleClose = (surveyId: string) => {
-    const next = setSurveyStatus(surveys, surveyId, 'closed');
-    updateSurveyList(next);
+  const handleClose = async (surveyId: string) => {
+    try {
+      const closed = await closeSurvey(surveyId);
+      updateSurveyList(getSurveys().map((survey) => (survey.id === closed.id ? closed : survey)));
+    } catch (closeError) {
+      setError(closeError instanceof Error ? closeError.message : 'Unable to close the survey.');
+    }
   };
 
   const handleDuplicate = (surveyId: string) => {
@@ -82,6 +93,8 @@ export default function DashboardPage() {
         </button>
       </div>
 
+      {error && <p className="mb-4 rounded-lg border border-red-200 bg-red-50 p-3 text-sm text-red-700">{error}</p>}
+
       <div className="mb-6 flex flex-col gap-3 rounded-xl border border-slate-200 bg-white p-4 shadow-soft md:flex-row">
         <input
           value={search}
@@ -102,24 +115,26 @@ export default function DashboardPage() {
         </select>
       </div>
 
-      <div className="grid gap-4 md:grid-cols-2 xl:grid-cols-3">
-        {filteredSurveys.map((survey) => (
-          <SurveyCard
-            key={survey.id}
-            survey={survey}
-            onEdit={() => navigate(`/surveys/${survey.id}/edit`)}
-            onActivate={() => handleActivate(survey.id)}
-            onDuplicate={() => handleDuplicate(survey.id)}
-            onArchive={() => handleArchive(survey.id)}
-            onResults={() => navigate(`/surveys/${survey.id}/results`)}
-            onDelete={() => handleDelete(survey.id)}
-            onPresent={() => navigate(`/surveys/${survey.id}/present`)}
-            onClose={() => handleClose(survey.id)}
-          />
-        ))}
-      </div>
-
-      {filteredSurveys.length === 0 && (
+      {loading ? (
+        <div className="rounded-xl border border-slate-200 bg-white p-8 text-center text-slate-500 shadow-soft">Loading surveys...</div>
+      ) : filteredSurveys.length > 0 ? (
+        <div className="grid gap-4 md:grid-cols-2 xl:grid-cols-3">
+          {filteredSurveys.map((survey) => (
+            <SurveyCard
+              key={survey.id}
+              survey={survey}
+              onEdit={() => navigate(`/surveys/${survey.id}/edit`)}
+              onActivate={() => void handleActivate(survey.id)}
+              onDuplicate={() => handleDuplicate(survey.id)}
+              onArchive={() => handleArchive(survey.id)}
+              onResults={() => navigate(`/surveys/${survey.id}/results`)}
+              onDelete={() => handleDelete(survey.id)}
+              onPresent={() => navigate(`/surveys/${survey.id}/present`)}
+              onClose={() => void handleClose(survey.id)}
+            />
+          ))}
+        </div>
+      ) : (
         <div className="rounded-xl border border-dashed border-slate-300 bg-white p-8 text-center text-slate-500 shadow-soft">
           No surveys match the current filter.
         </div>

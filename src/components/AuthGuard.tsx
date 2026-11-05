@@ -1,5 +1,5 @@
 import { Navigate } from 'react-router-dom';
-import { isAuthenticated } from '../pages/LoginPage';
+import { isAuthenticated } from '../lib/auth';
 
 export function AuthGuard({ children }: { children: React.ReactNode }) {
   if (!isAuthenticated()) {

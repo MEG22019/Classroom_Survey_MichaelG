@@ -1,21 +1,12 @@
-# Verified Implementation Status
+# Completed instructor interface
 
-This repository originally contained only the specification documents and no working application code. The app was rebuilt from scratch in the repo root and verified locally.
-
-## Completed and verified
-
-- [x] Reviewed the specification files and confirmed the required feature set.
-- [x] Created a Vite React + TypeScript project in the repository root.
-- [x] Added Tailwind CSS, React Router, Supabase client, Recharts, and QR code generation.
-- [x] Established a clean `src/components`, `src/pages`, and `src/lib` structure.
-- [x] Built a local-first survey workflow with landing page, login, dashboard, editor, presenter, public survey, results, and CSV export.
-- [x] Added local data persistence for surveys and anonymous submissions.
-- [x] Verified the app runs locally with `npm run dev -- --host 0.0.0.0`.
-- [x] Verified `npm run build` succeeds.
-
-## Remaining setup requirements
-
-- [ ] Connect a real Supabase project and set `VITE_SUPABASE_URL` and `VITE_SUPABASE_ANON_KEY` in `.env`.
-- [ ] Configure real database tables, RLS policies, and auth flows for production use.
-- [ ] Deploy the app on Render instead of Cloudflare Pages.
-- [ ] Add production verification for login, QR delivery, and student submissions after deployment.
+- [x] Reviewed the UI and API specifications and implemented the required instructor workflow.
+- [x] Added Supabase-powered instructor login, protected routes, and logout handling.
+- [x] Built the dashboard with saved surveys, status badges, creation dates, search, and filtering.
+- [x] Implemented the survey editor with draft saves, validation, question creation, deletion, reordering, and answer choice management.
+- [x] Added duplicate, archive, and delete actions with confirmation flows.
+- [x] Added activation and close flows with automatic closure of the previously active survey.
+- [x] Prevented editing active surveys until they are closed.
+- [x] Added responsive layouts, loading states, and clear user-facing error messages.
+- [x] Added public presentation and student submission screens with persistence after refresh.
+- [x] Verified the app builds successfully and serves locally.

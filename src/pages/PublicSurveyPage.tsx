@@ -9,6 +9,7 @@ export default function PublicSurveyPage() {
   const survey = slug ? getSurveyBySlug(slug) : undefined;
   const [answers, setAnswers] = useState<Record<string, string>>({});
   const [error, setError] = useState('');
+  const [isSubmitting, setIsSubmitting] = useState(false);
   const [submitted, setSubmitted] = useState(false);
 
   if (!survey) {
@@ -49,20 +50,28 @@ export default function PublicSurveyPage() {
       return;
     }
 
-    const submission = {
-      id: `submission-${Math.random().toString(36).slice(2, 10)}`,
-      surveyId: survey.id,
-      token,
-      submittedAt: new Date().toISOString(),
-      answers: survey.questions.map((question) => ({
-        questionId: question.id,
-        choiceId: question.choices.find((choice) => choice.text === answers[question.id])?.id,
-        textAnswer: answers[question.id],
-      })),
-    };
+    setIsSubmitting(true);
 
-    saveSubmission(submission);
-    setSubmitted(true);
+    try {
+      const submission = {
+        id: `submission-${Math.random().toString(36).slice(2, 10)}`,
+        surveyId: survey.id,
+        token,
+        submittedAt: new Date().toISOString(),
+        answers: survey.questions.map((question) => ({
+          questionId: question.id,
+          choiceId: question.choices.find((choice) => choice.text === answers[question.id])?.id,
+          textAnswer: answers[question.id],
+        })),
+      };
+
+      saveSubmission(submission);
+      setSubmitted(true);
+    } catch {
+      setError('Something went wrong while saving your submission. Please try again.');
+    } finally {
+      setIsSubmitting(false);
+    }
   };
 
   return (
@@ -76,44 +85,27 @@ export default function PublicSurveyPage() {
             <div key={question.id} className="rounded-xl border border-slate-200 bg-slate-50 p-5">
               <p className="mb-4 text-lg font-semibold text-slate-800">{index + 1}. {question.text}</p>
 
-              {question.type === 'multiple_choice' ? (
-                <div className="space-y-3">
-                  {question.choices.map((choice) => (
-                    <label key={choice.id} className="flex items-center gap-3 rounded-lg border border-slate-200 bg-white p-3 text-slate-700 hover:bg-slate-100">
-                      <input
-                        type="radio"
-                        name={question.id}
-                        checked={answers[question.id] === choice.text}
-                        onChange={() => setAnswer(question.id, choice.text)}
-                        className="h-4 w-4 text-indigo-600"
-                      />
-                      <span>{choice.text}</span>
-                    </label>
-                  ))}
-                </div>
-              ) : (
-                <div className="space-y-3">
-                  {question.choices.map((choice) => (
-                    <label key={choice.id} className="flex items-center gap-3 rounded-lg border border-slate-200 bg-white p-3 text-slate-700 hover:bg-slate-100">
-                      <input
-                        type="radio"
-                        name={question.id}
-                        checked={answers[question.id] === choice.text}
-                        onChange={() => setAnswer(question.id, choice.text)}
-                        className="h-4 w-4 text-indigo-600"
-                      />
-                      <span>{choice.text}</span>
-                    </label>
-                  ))}
-                </div>
-              )}
+              <div className="space-y-3">
+                {question.choices.map((choice) => (
+                  <label key={choice.id} className="flex items-center gap-3 rounded-lg border border-slate-200 bg-white p-3 text-slate-700 hover:bg-slate-100">
+                    <input
+                      type="radio"
+                      name={question.id}
+                      checked={answers[question.id] === choice.text}
+                      onChange={() => setAnswer(question.id, choice.text)}
+                      className="h-4 w-4 text-indigo-600"
+                    />
+                    <span>{choice.text}</span>
+                  </label>
+                ))}
+              </div>
             </div>
           ))}
 
           {error && <p className="rounded-lg border border-red-200 bg-red-50 p-3 text-sm text-red-700">{error}</p>}
 
-          <button type="submit" className="w-full rounded-lg bg-indigo-600 px-4 py-3 font-medium text-white hover:bg-indigo-500">
-            Submit Response
+          <button type="submit" disabled={isSubmitting} className="w-full rounded-lg bg-indigo-600 px-4 py-3 font-medium text-white hover:bg-indigo-500 disabled:cursor-not-allowed disabled:bg-indigo-400">
+            {isSubmitting ? 'Submitting...' : 'Submit Response'}
           </button>
         </form>
       </div>

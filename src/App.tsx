@@ -1,8 +1,9 @@
 import { Navigate, Route, Routes } from 'react-router-dom';
 import { Layout } from './components/Layout';
 import { AuthGuard } from './components/AuthGuard';
+import { isAuthenticated } from './lib/auth';
 import HomePage from './pages/HomePage';
-import LoginPage, { isAuthenticated } from './pages/LoginPage';
+import LoginPage from './pages/LoginPage';
 import DashboardPage from './pages/DashboardPage';
 import SurveyEditorPage from './pages/SurveyEditorPage';
 import PresentSurveyPage from './pages/PresentSurveyPage';

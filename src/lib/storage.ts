@@ -1,3 +1,5 @@
+import { AUTH_STORAGE_KEY } from './auth';
+import { supabase } from './supabase';
 import type { Question, Survey, SurveyStatus, SurveySubmission } from './types';
 import { createDefaultQuestion, slugify } from './utils';
 
@@ -60,6 +62,25 @@ const seedSurveys: Survey[] = [
   },
 ];
 
+export function normalizeSurvey(survey: Survey): Survey {
+  const normalizedQuestions = (survey.questions ?? []).map((question, questionIndex) => ({
+    ...question,
+    position: questionIndex + 1,
+    choices: (question.choices ?? []).map((choice, choiceIndex) => ({
+      ...choice,
+      position: choiceIndex + 1,
+    })),
+  }));
+
+  return {
+    ...survey,
+    title: survey.title?.trim() || 'Untitled Survey',
+    description: survey.description ?? '',
+    questions: normalizedQuestions,
+    updatedAt: new Date().toISOString(),
+  };
+}
+
 export function getSurveys(): Survey[] {
   const raw = localStorage.getItem(SURVEYS_KEY);
   if (!raw) {
@@ -69,19 +90,24 @@ export function getSurveys(): Survey[] {
 
   try {
     const parsed = JSON.parse(raw) as Survey[];
-    return Array.isArray(parsed) && parsed.length ? parsed : [...seedSurveys];
+    if (!Array.isArray(parsed) || parsed.length === 0) {
+      return [...seedSurveys];
+    }
+
+    return parsed.map((survey) => normalizeSurvey(survey));
   } catch {
     return [...seedSurveys];
   }
 }
 
 export function saveSurveys(surveys: Survey[]) {
-  localStorage.setItem(SURVEYS_KEY, JSON.stringify(surveys));
+  const safeSurveys = surveys.map((survey) => normalizeSurvey(survey));
+  localStorage.setItem(SURVEYS_KEY, JSON.stringify(safeSurveys));
 }
 
 export function createSurveyRecord(title: string, description: string): Survey {
   const now = new Date().toISOString();
-  return {
+  return normalizeSurvey({
     id: `survey-${Math.random().toString(36).slice(2, 10)}`,
     title: title.trim() || 'Untitled Survey',
     description: description.trim(),
@@ -90,7 +116,7 @@ export function createSurveyRecord(title: string, description: string): Survey {
     createdAt: now,
     updatedAt: now,
     questions: [createDefaultQuestion(1)],
-  };
+  });
 }
 
 export function setSurveyStatus(surveys: Survey[], surveyId: string, status: SurveyStatus): Survey[] {
@@ -157,7 +183,7 @@ export function duplicateSurvey(survey: Survey): Survey {
   }));
 
   const now = new Date().toISOString();
-  return {
+  return normalizeSurvey({
     id: `survey-${Math.random().toString(36).slice(2, 10)}`,
     title: `Copy of ${survey.title}`,
     description: survey.description,
@@ -166,5 +192,86 @@ export function duplicateSurvey(survey: Survey): Survey {
     createdAt: now,
     updatedAt: now,
     questions: clonedQuestions,
-  };
+  });
+}
+
+export async function activateSurvey(surveyId: string): Promise<Survey> {
+  const activeSurvey = getSurveyById(surveyId);
+  if (!activeSurvey) {
+    throw new Error('Survey not found.');
+  }
+
+  if (supabase && localStorage.getItem(AUTH_STORAGE_KEY) === 'true') {
+    try {
+      const { data, error } = await supabase.rpc('activate_survey', {
+        p_survey_id: surveyId,
+        p_public_slug: activeSurvey.slug || null,
+      });
+
+      if (error) {
+        throw new Error(error.message || 'Unable to activate the survey.');
+      }
+
+      const updatedSurveys = getSurveys().map((survey) => {
+        if (survey.id === surveyId) {
+          return normalizeSurvey({ ...survey, status: 'active', slug: data?.public_slug || survey.slug } as Survey);
+        }
+
+        if (survey.status === 'active') {
+          return { ...survey, status: 'closed', updatedAt: new Date().toISOString() } as Survey;
+        }
+
+        return survey;
+      });
+
+      saveSurveys(updatedSurveys);
+      return normalizeSurvey({ ...activeSurvey, status: 'active', slug: data?.public_slug || activeSurvey.slug } as Survey);
+    } catch (error) {
+      console.error('Activate survey in Supabase failed, falling back locally:', error);
+    }
+  }
+
+  const nextSurveys = setSurveyStatus(getSurveys(), surveyId, 'active');
+  saveSurveys(nextSurveys);
+  const activated = nextSurveys.find((survey) => survey.id === surveyId);
+
+  if (!activated) {
+    throw new Error('Survey could not be activated.');
+  }
+
+  return activated;
+}
+
+export async function closeSurvey(surveyId: string): Promise<Survey> {
+  const current = getSurveyById(surveyId);
+  if (!current) {
+    throw new Error('Survey not found.');
+  }
+
+  if (supabase && localStorage.getItem(AUTH_STORAGE_KEY) === 'true') {
+    try {
+      const { data, error } = await supabase.rpc('close_survey', { p_survey_id: surveyId });
+      if (error) {
+        throw new Error(error.message || 'Unable to close the survey.');
+      }
+
+      const updated = getSurveys().map((survey) =>
+        survey.id === surveyId ? normalizeSurvey({ ...survey, status: 'closed', slug: data?.public_slug || survey.slug } as Survey) : survey,
+      );
+      saveSurveys(updated);
+      return normalizeSurvey({ ...current, status: 'closed', slug: data?.public_slug || current.slug } as Survey);
+    } catch (error) {
+      console.error('Close survey in Supabase failed, falling back locally:', error);
+    }
+  }
+
+  const nextSurveys = setSurveyStatus(getSurveys(), surveyId, 'closed');
+  saveSurveys(nextSurveys);
+  const closed = nextSurveys.find((survey) => survey.id === surveyId);
+
+  if (!closed) {
+    throw new Error('Survey could not be closed.');
+  }
+
+  return closed;
 }
