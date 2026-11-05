@@ -37,3 +37,29 @@ export interface SurveySubmission {
     textAnswer?: string;
   }>;
 }
+
+export interface SurveyChoiceResult {
+  choiceId: string;
+  choiceText: string;
+  count: number;
+  percentage: number;
+}
+
+export interface SurveyQuestionResult {
+  questionId: string;
+  questionText: string;
+  questionType: QuestionType;
+  totalResponses: number;
+  unanswered: number;
+  choices: SurveyChoiceResult[];
+}
+
+export interface SurveyResultsSummary {
+  surveyId: string;
+  surveyTitle: string;
+  surveyStatus: SurveyStatus;
+  publicSlug: string;
+  totalResponses: number;
+  questions: SurveyQuestionResult[];
+  submissions: SurveySubmission[];
+}

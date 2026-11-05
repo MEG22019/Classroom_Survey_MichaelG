@@ -22,7 +22,13 @@ export function buildCsv(rows: Record<string, string>[]): string {
     csvRows.push(values.join(','));
   });
 
-  return csvRows.join('\n');
+  return csvRows.join('\r\n');
+}
+
+export function escapeCsvCell(value: string | number | null | undefined): string {
+  const safeValue = value == null ? '' : String(value);
+  const escaped = safeValue.replace(/"/g, '""');
+  return `"${escaped}"`;
 }
 
 export function slugify(value: string): string {

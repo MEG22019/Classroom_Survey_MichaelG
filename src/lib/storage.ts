@@ -1,6 +1,6 @@
 import { AUTH_STORAGE_KEY } from './auth';
 import { supabase } from './supabase';
-import type { Question, Survey, SurveyStatus, SurveySubmission } from './types';
+import type { Question, Survey, SurveyChoiceResult, SurveyQuestionResult, SurveyResultsSummary, SurveyStatus, SurveySubmission } from './types';
 import { createDefaultQuestion, generateUniquePublicSlug, slugify } from './utils';
 
 const SURVEYS_KEY = 'classroom-survey-surveys-v1';
@@ -161,11 +161,191 @@ export function getSubmissionsForSurvey(surveyId: string): SurveySubmission[] {
   }
 }
 
+function buildSummaryFromSubmissions(survey: Survey | undefined, submissions: SurveySubmission[]): SurveyResultsSummary {
+  const safeSurvey = survey ?? {
+    id: 'unknown',
+    title: 'Unknown Survey',
+    description: '',
+    status: 'draft',
+    slug: 'unknown',
+    createdAt: new Date().toISOString(),
+    updatedAt: new Date().toISOString(),
+    questions: [],
+  };
+
+  const questions = safeSurvey.questions.map((question) => {
+    const counts: Record<string, number> = {};
+    question.choices.forEach((choice) => {
+      counts[choice.id] = 0;
+    });
+
+    submissions.forEach((submission) => {
+      const answer = submission.answers.find((entry) => entry.questionId === question.id);
+      if (!answer || (!answer.choiceId && (!answer.textAnswer || answer.textAnswer.trim() === ''))) {
+        return;
+      }
+
+      if (answer.choiceId) {
+        counts[answer.choiceId] = (counts[answer.choiceId] ?? 0) + 1;
+      }
+    });
+
+    const choiceResults: SurveyChoiceResult[] = question.choices.map((choice) => {
+      const count = counts[choice.id] ?? 0;
+      const percentage = submissions.length === 0 ? 0 : (count / submissions.length) * 100;
+      return {
+        choiceId: choice.id,
+        choiceText: choice.text,
+        count,
+        percentage,
+      };
+    });
+
+    const unanswered = submissions.filter((submission) => {
+      const answer = submission.answers.find((entry) => entry.questionId === question.id);
+      return !answer || (!answer.choiceId && (!answer.textAnswer || answer.textAnswer.trim() === ''));
+    }).length;
+
+    return {
+      questionId: question.id,
+      questionText: question.text,
+      questionType: question.type,
+      totalResponses: submissions.length,
+      unanswered,
+      choices: choiceResults,
+    } as SurveyQuestionResult;
+  });
+
+  return {
+    surveyId: safeSurvey.id,
+    surveyTitle: safeSurvey.title,
+    surveyStatus: safeSurvey.status,
+    publicSlug: safeSurvey.slug,
+    totalResponses: submissions.length,
+    questions,
+    submissions,
+  };
+}
+
 export function saveSubmission(submission: SurveySubmission) {
   const existing = localStorage.getItem(SUBMISSIONS_KEY);
   const items: SurveySubmission[] = existing ? JSON.parse(existing) : [];
   items.push(submission);
   localStorage.setItem(SUBMISSIONS_KEY, JSON.stringify(items));
+}
+
+export async function getInstructorSurveyHistory(): Promise<Survey[]> {
+  if (supabase && localStorage.getItem(AUTH_STORAGE_KEY) === 'true') {
+    try {
+      const { data, error } = await supabase.from('surveys').select('*').order('created_at', { ascending: false });
+      if (!error && data) {
+        return data.map((entry) => ({
+          id: entry.id,
+          title: entry.title,
+          description: entry.description || '',
+          status: entry.status,
+          slug: entry.public_slug || '',
+          createdAt: entry.created_at,
+          updatedAt: entry.updated_at,
+          questions: [],
+        }));
+      }
+    } catch (error) {
+      console.error('Supabase survey history request failed:', error);
+    }
+  }
+
+  return getSurveys();
+}
+
+export async function getSurveyResultsSummary(surveyId: string): Promise<SurveyResultsSummary> {
+  const survey = getSurveyById(surveyId);
+  const localSubmissions = getSubmissionsForSurvey(surveyId);
+
+  if (supabase && localStorage.getItem(AUTH_STORAGE_KEY) === 'true') {
+    try {
+      const { data: surveyData, error: surveyError } = await supabase.from('surveys').select('*').eq('id', surveyId).maybeSingle();
+      if (surveyError) {
+        throw new Error(surveyError.message || 'Unable to load survey metadata.');
+      }
+
+      const { data: questionData, error: questionError } = await supabase
+        .from('questions')
+        .select('*, choices(*)')
+        .eq('survey_id', surveyId)
+        .order('position', { ascending: true });
+
+      if (questionError) {
+        throw new Error(questionError.message || 'Unable to load question results.');
+      }
+
+      const { data: responseData, error: responseError } = await supabase
+        .from('responses')
+        .select('*')
+        .eq('survey_id', surveyId)
+        .order('submitted_at', { ascending: false });
+
+      if (responseError) {
+        throw new Error(responseError.message || 'Unable to load responses.');
+      }
+
+      const responseIds = (responseData ?? []).map((entry) => entry.id);
+      const { data: answerData, error: answerError } = responseIds.length > 0
+        ? await supabase.from('answers').select('*').in('response_id', responseIds)
+        : { data: [], error: null };
+
+      if (answerError) {
+        throw new Error(answerError.message || 'Unable to load individual answers.');
+      }
+
+      const questions = (questionData ?? []).map((question: {
+        id: string;
+        question_text: string;
+        question_type: 'multiple_choice' | 'true_false';
+        position: number;
+        choices?: Array<{ id: string; choice_text: string; position: number }>;
+      }) => ({
+        id: question.id,
+        text: question.question_text,
+        type: question.question_type,
+        position: question.position,
+        choices: (question.choices ?? []).map((choice: { id: string; choice_text: string; position: number }) => ({
+          id: choice.id,
+          text: choice.choice_text,
+          position: choice.position,
+        })),
+      }));
+
+      const submissions: SurveySubmission[] = (responseData ?? []).map((response) => ({
+        id: response.id,
+        surveyId: response.survey_id,
+        token: response.anonymous_token || 'anonymous',
+        submittedAt: response.submitted_at,
+        answers: (answerData ?? []).filter((answer) => answer.response_id === response.id).map((answer) => ({
+          questionId: answer.question_id,
+          choiceId: answer.choice_id ?? undefined,
+          textAnswer: answer.text_answer ?? undefined,
+        })),
+      }));
+
+      const normalizedSurvey: Survey = {
+        id: surveyData?.id ?? surveyId,
+        title: surveyData?.title ?? survey?.title ?? 'Unknown Survey',
+        description: surveyData?.description ?? survey?.description ?? '',
+        status: (surveyData?.status as SurveyStatus) ?? survey?.status ?? 'draft',
+        slug: surveyData?.public_slug ?? survey?.slug ?? '',
+        createdAt: surveyData?.created_at ?? survey?.createdAt ?? new Date().toISOString(),
+        updatedAt: surveyData?.updated_at ?? survey?.updatedAt ?? new Date().toISOString(),
+        questions,
+      };
+
+      return buildSummaryFromSubmissions(normalizedSurvey, submissions);
+    } catch (error) {
+      console.error('Supabase result aggregation failed, falling back to local storage:', error);
+    }
+  }
+
+  return buildSummaryFromSubmissions(survey, localSubmissions);
 }
 
 export function hasSubmittedSurvey(surveyId: string, token: string): boolean {
