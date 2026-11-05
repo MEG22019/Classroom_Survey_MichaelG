@@ -1,7 +1,7 @@
 import { Navigate, Route, Routes } from 'react-router-dom';
 import { Layout } from './components/Layout';
 import { AuthGuard } from './components/AuthGuard';
-import { isAuthenticated } from './lib/auth';
+import { useAuthState } from './lib/auth';
 import HomePage from './pages/HomePage';
 import LoginPage from './pages/LoginPage';
 import DashboardPage from './pages/DashboardPage';
@@ -12,11 +12,16 @@ import PublicSurveyPage from './pages/PublicSurveyPage';
 import NotFoundPage from './pages/NotFoundPage';
 
 export default function App() {
+  const { ready, authenticated } = useAuthState();
+
   return (
     <Layout>
       <Routes>
         <Route path="/" element={<HomePage />} />
-        <Route path="/login" element={isAuthenticated() ? <Navigate to="/dashboard" replace /> : <LoginPage />} />
+        <Route
+          path="/login"
+          element={ready && authenticated ? <Navigate to="/dashboard" replace /> : <LoginPage />}
+        />
         <Route path="/dashboard" element={<AuthGuard><DashboardPage /></AuthGuard>} />
         <Route path="/surveys/new" element={<AuthGuard><SurveyEditorPage /></AuthGuard>} />
         <Route path="/surveys/:surveyId/edit" element={<AuthGuard><SurveyEditorPage /></AuthGuard>} />
