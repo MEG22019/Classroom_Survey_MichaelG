@@ -14,6 +14,8 @@
 - [x] Implemented instructor results aggregation, charts, refresh, and CSV export.
 - [x] Added local persistence for surveys, submissions, and auth state to keep workflows stable across refreshes.
 - [x] Verified the app compiles via the production build command.
+- [x] Prepared the app for deployment as a Render Static Site and documented the required workflow.
+- [x] Added `render.yaml` with the static publish path and SPA rewrite for React Router.
 
 ## Incomplete
 
@@ -22,6 +24,7 @@
 - [ ] Verify real instructor login/logout against Supabase Auth and confirm protected routes behave correctly after a real session is established.
 - [ ] Verify the live activation/close database flow and ensure the previous active survey is automatically closed in the database, not only locally.
 - [ ] Verify the anonymous submission RPC and duplicate-prevention constraints against real database rows.
+- [ ] Create the live Render Static Site and verify the public URL in a browser.
 
 ## Unverified
 
