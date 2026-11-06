@@ -1,15 +1,35 @@
 import { useEffect, useState } from 'react';
 import { Link, useNavigate, useParams } from 'react-router-dom';
 import QRCode from 'qrcode';
-import { closeSurvey, getSurveyById, getSurveys, getSubmissionsForSurvey } from '../lib/storage';
+import { closeSurvey, fetchSurveyById, getSubmissionsForSurvey } from '../lib/storage';
+import type { Survey } from '../lib/types';
 import { getPublicSurveyUrl } from '../lib/utils';
 
 export default function PresentSurveyPage() {
   const { surveyId } = useParams();
   const navigate = useNavigate();
+  const [survey, setSurvey] = useState<Survey | null>(null);
   const [qrCode, setQrCode] = useState('');
   const [isLoading, setIsLoading] = useState(true);
-  const survey = getSurveyById(surveyId ?? '');
+
+  useEffect(() => {
+    let active = true;
+
+    const loadSurvey = async () => {
+      if (!surveyId) {
+        setSurvey(null);
+        return;
+      }
+
+      const nextSurvey = await fetchSurveyById(surveyId);
+      if (active) {
+        setSurvey(nextSurvey ?? null);
+      }
+    };
+
+    void loadSurvey();
+    return () => { active = false; };
+  }, [surveyId]);
 
   useEffect(() => {
     if (!survey) return;

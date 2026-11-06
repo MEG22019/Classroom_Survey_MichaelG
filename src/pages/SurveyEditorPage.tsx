@@ -1,7 +1,7 @@
 import { useEffect, useState } from 'react';
 import { useNavigate, useParams } from 'react-router-dom';
 import { QuestionEditor } from '../components/QuestionEditor';
-import { activateSurvey, createSurveyRecord, getSurveys, normalizeSurvey, saveSurveys } from '../lib/storage';
+import { activateSurvey, createSurveyRecord, fetchSurveys, normalizeSurvey, saveSurveys } from '../lib/storage';
 import type { Question, Survey } from '../lib/types';
 import { createDefaultChoice, createDefaultQuestion } from '../lib/utils';
 
@@ -13,15 +13,23 @@ export default function SurveyEditorPage() {
   const [error, setError] = useState('');
 
   useEffect(() => {
-    const allSurveys = getSurveys();
+    let active = true;
 
-    if (surveyId && surveyId !== 'new') {
-      const existing = allSurveys.find((entry) => entry.id === surveyId) ?? null;
-      setSurvey(existing ? normalizeSurvey(existing) : null);
-      return;
-    }
+    const loadSurvey = async () => {
+      const allSurveys = await fetchSurveys();
+      if (!active) return;
 
-    setSurvey(createSurveyRecord('New Survey', ''));
+      if (surveyId && surveyId !== 'new') {
+        const existing = allSurveys.find((entry) => entry.id === surveyId) ?? null;
+        setSurvey(existing ? normalizeSurvey(existing) : null);
+        return;
+      }
+
+      setSurvey(createSurveyRecord('New Survey', ''));
+    };
+
+    void loadSurvey();
+    return () => { active = false; };
   }, [surveyId]);
 
   if (!survey) {
@@ -178,12 +186,12 @@ export default function SurveyEditorPage() {
 
     try {
       const normalized = normalizeSurvey({ ...survey, status: nextStatus, updatedAt: new Date().toISOString() });
-      const allSurveys = getSurveys();
+      const allSurveys = await fetchSurveys();
       const nextSurveys = allSurveys.some((item) => item.id === normalized.id)
         ? allSurveys.map((item) => (item.id === normalized.id ? normalized : item))
         : [normalized, ...allSurveys];
 
-      saveSurveys(nextSurveys);
+      await saveSurveys(nextSurveys);
 
       if (nextStatus === 'active') {
         const activated = await activateSurvey(normalized.id);

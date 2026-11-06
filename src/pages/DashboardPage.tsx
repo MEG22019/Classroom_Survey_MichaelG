@@ -1,7 +1,7 @@
 import { useEffect, useMemo, useState } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { SurveyCard } from '../components/SurveyCard';
-import { activateSurvey, closeSurvey, createSurveyRecord, duplicateSurvey, getSurveys, saveSurveys, setSurveyStatus } from '../lib/storage';
+import { activateSurvey, closeSurvey, createSurveyRecord, deleteSurvey, duplicateSurvey, fetchSurveys, saveSurveys, setSurveyStatus } from '../lib/storage';
 import type { Survey } from '../lib/types';
 
 export default function DashboardPage() {
@@ -13,15 +13,29 @@ export default function DashboardPage() {
   const [error, setError] = useState('');
 
   useEffect(() => {
-    setLoading(true);
-    try {
-      setSurveys(getSurveys());
-      setError('');
-    } catch {
-      setError('Unable to load saved surveys.');
-    } finally {
-      setLoading(false);
-    }
+    let active = true;
+
+    const loadSurveys = async () => {
+      setLoading(true);
+      try {
+        const nextSurveys = await fetchSurveys();
+        if (active) {
+          setSurveys(nextSurveys);
+          setError('');
+        }
+      } catch {
+        if (active) {
+          setError('Unable to load saved surveys.');
+        }
+      } finally {
+        if (active) {
+          setLoading(false);
+        }
+      }
+    };
+
+    void loadSurveys();
+    return () => { active = false; };
   }, []);
 
   const filteredSurveys = useMemo(() => {
@@ -32,32 +46,44 @@ export default function DashboardPage() {
     });
   }, [search, statusFilter, surveys]);
 
-  const updateSurveyList = (nextSurveys: Survey[]) => {
+  const updateSurveyList = async (nextSurveys: Survey[]) => {
     setSurveys(nextSurveys);
-    saveSurveys(nextSurveys);
+    await saveSurveys(nextSurveys);
   };
 
-  const handleNewSurvey = () => {
+  const handleNewSurvey = async () => {
     const created = createSurveyRecord('New Survey', '');
     const nextSurveys = [created, ...surveys];
-    updateSurveyList(nextSurveys);
+    await updateSurveyList(nextSurveys);
     navigate(`/surveys/${created.id}/edit`);
   };
 
-  const handleDelete = (surveyId: string) => {
+  const handleDelete = async (surveyId: string) => {
     const confirmed = window.confirm('Delete this survey and all associated responses?');
     if (!confirmed) return;
-    updateSurveyList(surveys.filter((survey) => survey.id !== surveyId));
+
+    try {
+      await deleteSurvey(surveyId);
+      const nextSurveys = surveys.filter((survey) => survey.id !== surveyId);
+      setSurveys(nextSurveys);
+      await saveSurveys(nextSurveys);
+    } catch (deleteError) {
+      setError(deleteError instanceof Error ? deleteError.message : 'Unable to delete the survey.');
+    }
   };
 
-  const handleArchive = (surveyId: string) => {
-    updateSurveyList(setSurveyStatus(surveys, surveyId, 'archived'));
+  const handleArchive = async (surveyId: string) => {
+    const nextSurveys = setSurveyStatus(surveys, surveyId, 'archived');
+    setSurveys(nextSurveys);
+    await saveSurveys(nextSurveys);
   };
 
   const handleActivate = async (surveyId: string) => {
     try {
       const activated = await activateSurvey(surveyId);
-      updateSurveyList(getSurveys().map((survey) => survey.id === activated.id ? activated : survey));
+      const nextSurveys = surveys.map((survey) => survey.id === activated.id ? activated : survey);
+      setSurveys(nextSurveys);
+      await saveSurveys(nextSurveys);
       navigate(`/surveys/${activated.id}/present`);
     } catch (activateError) {
       setError(activateError instanceof Error ? activateError.message : 'Unable to activate the survey.');
@@ -67,17 +93,20 @@ export default function DashboardPage() {
   const handleClose = async (surveyId: string) => {
     try {
       const closed = await closeSurvey(surveyId);
-      updateSurveyList(getSurveys().map((survey) => (survey.id === closed.id ? closed : survey)));
+      const nextSurveys = surveys.map((survey) => (survey.id === closed.id ? closed : survey));
+      setSurveys(nextSurveys);
+      await saveSurveys(nextSurveys);
     } catch (closeError) {
       setError(closeError instanceof Error ? closeError.message : 'Unable to close the survey.');
     }
   };
 
-  const handleDuplicate = (surveyId: string) => {
+  const handleDuplicate = async (surveyId: string) => {
     const survey = surveys.find((entry) => entry.id === surveyId);
     if (!survey) return;
     const next = [duplicateSurvey(survey), ...surveys];
-    updateSurveyList(next);
+    setSurveys(next);
+    await saveSurveys(next);
     navigate(`/surveys/${next[0].id}/edit`);
   };
 

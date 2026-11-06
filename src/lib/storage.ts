@@ -6,6 +6,125 @@ import { createDefaultQuestion, generateUniquePublicSlug, slugify } from './util
 const SURVEYS_KEY = 'classroom-survey-surveys-v1';
 const SUBMISSIONS_KEY = 'classroom-survey-submissions-v1';
 
+function isSupabaseSessionActive(): boolean {
+  return !!supabase && localStorage.getItem(AUTH_STORAGE_KEY) === 'true';
+}
+
+function isValidUuid(value: string): boolean {
+  return /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i.test(value ?? '');
+}
+
+function assignUuidIfNeeded(value: string): string {
+  if (isValidUuid(value)) {
+    return value;
+  }
+
+  return typeof crypto !== 'undefined' && 'randomUUID' in crypto ? crypto.randomUUID() : value;
+}
+
+function mapSurveyRow(row: any): Survey {
+  const questions = (row.questions ?? []).map((questionRow: any) => ({
+    id: questionRow.id,
+    text: questionRow.question_text,
+    type: questionRow.question_type,
+    position: questionRow.position ?? 1,
+    choices: (questionRow.choices ?? []).map((choiceRow: any) => ({
+      id: choiceRow.id,
+      text: choiceRow.choice_text,
+      position: choiceRow.position ?? 1,
+    })).sort((left: any, right: any) => (left.position ?? 0) - (right.position ?? 0)),
+  })).sort((left: any, right: any) => (left.position ?? 0) - (right.position ?? 0));
+
+  return {
+    id: row.id,
+    title: row.title,
+    description: row.description ?? '',
+    status: row.status,
+    slug: row.public_slug ?? '',
+    createdAt: row.created_at,
+    updatedAt: row.updated_at,
+    questions,
+  };
+}
+
+export async function fetchSurveys(): Promise<Survey[]> {
+  if (isSupabaseSessionActive()) {
+    try {
+      const { data, error } = await supabase!
+        .from('surveys')
+        .select('*, questions(*, choices(*))')
+        .order('created_at', { ascending: false });
+
+      if (!error && data) {
+        const surveys = data.map(mapSurveyRow);
+        localStorage.setItem(SURVEYS_KEY, JSON.stringify(surveys));
+        return surveys;
+      }
+
+      if (error) {
+        console.error('Failed to load surveys from Supabase:', error);
+      }
+    } catch (error) {
+      console.error('Supabase survey fetch failed:', error);
+    }
+  }
+
+  return getSurveys();
+}
+
+export async function fetchSurveyById(surveyId: string): Promise<Survey | undefined> {
+  if (isSupabaseSessionActive()) {
+    try {
+      const { data, error } = await supabase!
+        .from('surveys')
+        .select('*, questions(*, choices(*))')
+        .eq('id', surveyId)
+        .maybeSingle();
+
+      if (!error && data) {
+        const survey = mapSurveyRow(data);
+        localStorage.setItem(SURVEYS_KEY, JSON.stringify([survey]));
+        return survey;
+      }
+
+      if (error) {
+        console.error('Failed to load survey by id from Supabase:', error);
+      }
+    } catch (error) {
+      console.error('Supabase survey lookup failed:', error);
+    }
+  }
+
+  return getSurveys().find((survey) => survey.id === surveyId);
+}
+
+export async function fetchSurveyBySlug(slug: string): Promise<Survey | undefined> {
+  if (isSupabaseSessionActive()) {
+    try {
+      const { data, error } = await supabase!
+        .from('surveys')
+        .select('*, questions(*, choices(*))')
+        .eq('public_slug', slug)
+        .eq('status', 'active')
+        .maybeSingle();
+
+      if (!error && data) {
+        const survey = mapSurveyRow(data);
+        localStorage.setItem(SURVEYS_KEY, JSON.stringify([survey]));
+        return survey;
+      }
+
+      if (error) {
+        console.error('Failed to load survey by slug from Supabase:', error);
+      }
+    } catch (error) {
+      console.error('Supabase survey slug lookup failed:', error);
+    }
+  }
+
+  return getSurveys().find((survey) => survey.slug === slug && survey.status === 'active');
+}
+
 const seedSurveys: Survey[] = [
   {
     id: 'survey-demo-1',
@@ -100,15 +219,108 @@ export function getSurveys(): Survey[] {
   }
 }
 
-export function saveSurveys(surveys: Survey[]) {
-  const safeSurveys = surveys.map((survey) => normalizeSurvey(survey));
+export async function saveSurveys(surveys: Survey[]) {
+  const safeSurveys = surveys.map((survey) => normalizeSurvey(survey)).map((survey) => ({
+    ...survey,
+    id: assignUuidIfNeeded(survey.id),
+    questions: survey.questions.map((question) => ({
+      ...question,
+      id: assignUuidIfNeeded(question.id),
+      choices: question.choices.map((choice) => ({
+        ...choice,
+        id: assignUuidIfNeeded(choice.id),
+      })),
+    })),
+  }));
+
+  if (isSupabaseSessionActive()) {
+    try {
+      for (const survey of safeSurveys) {
+        const { error: surveyError } = await supabase!.from('surveys').upsert({
+          id: survey.id,
+          title: survey.title,
+          description: survey.description,
+          status: survey.status,
+          public_slug: survey.slug || null,
+          updated_at: new Date().toISOString(),
+        }, { onConflict: 'id' });
+
+        if (surveyError) {
+          throw surveyError;
+        }
+
+        const { data: existingQuestions, error: questionLookupError } = await supabase!
+          .from('questions')
+          .select('id')
+          .eq('survey_id', survey.id);
+
+        if (questionLookupError) {
+          throw questionLookupError;
+        }
+
+        if ((existingQuestions ?? []).length > 0) {
+          const questionIds = (existingQuestions ?? []).map((question) => question.id);
+          const { error: choiceDeleteError } = await supabase!
+            .from('choices')
+            .delete()
+            .in('question_id', questionIds);
+
+          if (choiceDeleteError) {
+            throw choiceDeleteError;
+          }
+
+          const { error: questionDeleteError } = await supabase!
+            .from('questions')
+            .delete()
+            .in('id', questionIds);
+
+          if (questionDeleteError) {
+            throw questionDeleteError;
+          }
+        }
+
+        for (const question of survey.questions) {
+          const { error: questionError } = await supabase!.from('questions').upsert({
+            id: question.id,
+            survey_id: survey.id,
+            question_text: question.text,
+            question_type: question.type,
+            position: question.position,
+          }, { onConflict: 'id' });
+
+          if (questionError) {
+            throw questionError;
+          }
+
+          for (const choice of question.choices) {
+            const { error: choiceError } = await supabase!.from('choices').upsert({
+              id: choice.id,
+              question_id: question.id,
+              choice_text: choice.text,
+              position: choice.position,
+            }, { onConflict: 'id' });
+
+            if (choiceError) {
+              throw choiceError;
+            }
+          }
+        }
+      }
+
+      localStorage.setItem(SURVEYS_KEY, JSON.stringify(safeSurveys));
+      return;
+    } catch (error) {
+      console.error('Supabase survey save failed:', error);
+    }
+  }
+
   localStorage.setItem(SURVEYS_KEY, JSON.stringify(safeSurveys));
 }
 
 export function createSurveyRecord(title: string, description: string): Survey {
   const now = new Date().toISOString();
   return normalizeSurvey({
-    id: `survey-${Math.random().toString(36).slice(2, 10)}`,
+    id: typeof crypto !== 'undefined' && 'randomUUID' in crypto ? crypto.randomUUID() : `survey-${Math.random().toString(36).slice(2, 10)}`,
     title: title.trim() || 'Untitled Survey',
     description: description.trim(),
     status: 'draft',
@@ -352,6 +564,25 @@ export function hasSubmittedSurvey(surveyId: string, token: string): boolean {
   return getSubmissionsForSurvey(surveyId).some((entry) => entry.token === token);
 }
 
+export async function deleteSurvey(surveyId: string): Promise<void> {
+  if (isSupabaseSessionActive()) {
+    try {
+      const { error } = await supabase!.from('surveys').delete().eq('id', surveyId);
+      if (error) {
+        throw error;
+      }
+      const nextSurveys = getSurveys().filter((survey) => survey.id !== surveyId);
+      localStorage.setItem(SURVEYS_KEY, JSON.stringify(nextSurveys));
+      return;
+    } catch (error) {
+      console.error('Supabase survey delete failed:', error);
+    }
+  }
+
+  const nextSurveys = getSurveys().filter((survey) => survey.id !== surveyId);
+  localStorage.setItem(SURVEYS_KEY, JSON.stringify(nextSurveys));
+}
+
 export async function submitSurveyResponse(surveyId: string, token: string, answers: Array<{ question_id: string; choice_id?: string; text_answer?: string }>): Promise<{ response_id: string }> {
   const survey = getSurveyById(surveyId);
   if (!survey) {
@@ -412,16 +643,16 @@ export async function submitSurveyResponse(surveyId: string, token: string, answ
 export function duplicateSurvey(survey: Survey): Survey {
   const clonedQuestions: Question[] = survey.questions.map((question) => ({
     ...question,
-    id: `question-${Math.random().toString(36).slice(2, 8)}`,
+    id: typeof crypto !== 'undefined' && 'randomUUID' in crypto ? crypto.randomUUID() : `question-${Math.random().toString(36).slice(2, 8)}`,
     choices: question.choices.map((choice) => ({
       ...choice,
-      id: `choice-${Math.random().toString(36).slice(2, 8)}`,
+      id: typeof crypto !== 'undefined' && 'randomUUID' in crypto ? crypto.randomUUID() : `choice-${Math.random().toString(36).slice(2, 8)}`,
     })),
   }));
 
   const now = new Date().toISOString();
   return normalizeSurvey({
-    id: `survey-${Math.random().toString(36).slice(2, 10)}`,
+    id: typeof crypto !== 'undefined' && 'randomUUID' in crypto ? crypto.randomUUID() : `survey-${Math.random().toString(36).slice(2, 10)}`,
     title: `Copy of ${survey.title}`,
     description: survey.description,
     status: 'draft',

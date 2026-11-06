@@ -53,7 +53,12 @@ export function generateUniquePublicSlug(title: string, existingSlugs: string[] 
 }
 
 export function makeId(prefix = 'id'): string {
-  return `${prefix}-${Math.random().toString(36).slice(2, 10)}`;
+  if (typeof crypto !== 'undefined' && 'randomUUID' in crypto) {
+    return crypto.randomUUID();
+  }
+
+  const randomHex = () => Math.random().toString(16).slice(2, 10);
+  return `${randomHex()}${randomHex()}-${randomHex()}-4${randomHex().slice(0, 3)}-${randomHex().slice(0, 4)}-${randomHex()}${randomHex()}`.slice(0, 36);
 }
 
 export function createDefaultQuestion(position: number): Question {

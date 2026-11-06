@@ -1,16 +1,36 @@
-import { useState } from 'react';
+import { useEffect, useState } from 'react';
 import { useNavigate, useParams } from 'react-router-dom';
-import { getSurveyBySlug, submitSurveyResponse } from '../lib/storage';
+import { fetchSurveyBySlug, submitSurveyResponse } from '../lib/storage';
 import { getAnonymousToken } from '../lib/utils';
+import type { Survey } from '../lib/types';
 
 export default function PublicSurveyPage() {
   const { slug } = useParams();
   const navigate = useNavigate();
-  const survey = slug ? getSurveyBySlug(slug) : undefined;
+  const [survey, setSurvey] = useState<Survey | undefined>(undefined);
   const [answers, setAnswers] = useState<Record<string, string>>({});
   const [error, setError] = useState('');
   const [isSubmitting, setIsSubmitting] = useState(false);
   const [submitted, setSubmitted] = useState(false);
+
+  useEffect(() => {
+    let active = true;
+
+    const loadSurvey = async () => {
+      if (!slug) {
+        setSurvey(undefined);
+        return;
+      }
+
+      const nextSurvey = await fetchSurveyBySlug(slug);
+      if (active) {
+        setSurvey(nextSurvey);
+      }
+    };
+
+    void loadSurvey();
+    return () => { active = false; };
+  }, [slug]);
 
   if (!survey) {
     return <div className="mx-auto max-w-2xl px-4 py-16 text-center text-slate-500">Survey not found or no longer available.</div>;
